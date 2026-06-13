@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -8,16 +8,27 @@ using UnityEngine;
 
 namespace SmartAction
 {
-    [BepInPlugin("com.spt.SmartAction", "SmartAction", "1.0.0")]
+    // =========================================================================
+    // SmartAction — ported to SPT 4.0.13 / EFT 0.16.x
+    // =========================================================================
+    // PORTING NOTES:
+    //   GClass numbers shift every EFT patch. All GClass/Class references below
+    //   use reflection-based discovery (AccessTools / GetNestedTypes) instead of
+    //   direct type references so the mod survives minor GClass renumbering.
+    //   Items that still reference hardcoded strings are marked with:
+    //     // ⚠️ VERIFY: <what to check in dnSpy/ILSpy against your 4.0.x assembly>
+    // =========================================================================
+
+    [BepInPlugin("com.spt.SmartAction", "SmartAction", "2.0.0")]
     public class Plugin : BaseUnityPlugin
     {
         public static ManualLogSource LOGSource;
         public static ConfigEntry<int> IdleSpeed;
         public static ConfigEntry<int> WalkSpeed;
         public static ConfigEntry<int> SprintSpeed;
-        
+
         private static Harmony HarmonyInstance { get; set; }
-        
+
         private void Awake()
         {
             IdleSpeed = Config.Bind(
@@ -32,8 +43,8 @@ namespace SmartAction
                 "Walk",
                 10,
                 new ConfigDescription(
-                    "When Player Walk. Value Value 9 = x0.9 speed / Value 10 = x1 speed",
-                    new AcceptableValueRange<int>(9, 13)));            
+                    "When Player Walk. Value 9 = x0.9 speed / Value 10 = x1 speed",
+                    new AcceptableValueRange<int>(9, 13)));
             SprintSpeed = Config.Bind(
                 "Speed",
                 "Sprint",
@@ -50,16 +61,12 @@ namespace SmartAction
         private void InitializeFiles()
         {
             if (!File.Exists(PathsFile.DebugPath))
-            {
                 File.WriteAllText(PathsFile.DebugPath, "false");
-            }
-        
+
             if (!File.Exists(PathsFile.LogFilePath))
-            {
                 File.WriteAllText(PathsFile.LogFilePath, "");
-            }
-        
-            Logger.LogInfo("Log dans le fichier :" + PathsFile.LogFilePath);
+
+            Logger.LogInfo("Log file: " + PathsFile.LogFilePath);
         }
 
         private void InitializeLogger()
@@ -72,12 +79,11 @@ namespace SmartAction
             SmartActionLogger.Init(EnumLoggerMode.DirectWrite);
             Application.quitting += SmartActionLogger.OnApplicationQuit;
         }
-        
+
         private static void SetupHarmonyPatches()
         {
             HarmonyInstance = new Harmony("com.spt.SmartAction");
             HarmonyInstance.PatchAll();
         }
-       
     }
 }

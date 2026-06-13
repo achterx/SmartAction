@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Reflection;
 using EFT.HealthSystem;
 using EFT.InventoryLogic;
@@ -6,6 +6,23 @@ using HarmonyLib;
 using SmartAction.Utils;
 
 namespace SmartAction.Patch;
+
+// =========================================================================
+// PatchMedController — SPT 4.0.13 port
+// =========================================================================
+// This file is mostly unchanged from 3.11. The patches target the MedEffect
+// nested type (by name, not GClass number) and its lifecycle methods
+// (Added, Started, Residue) which are stable human-readable names.
+//
+// ⚠️ VERIFY these field/property names if patches stop working:
+//   "float_12"          — work time field on MedEffect (obfuscated, MAY change)
+//   "WorkStateTime"     — property on GClass2813/equivalent (may be renamed)
+//   "activeHealthController_0" — field on MedEffect
+//   "MedItem"           — property on MedEffect
+//
+// The GClass2813 reference in PatchMedEffectStarted is now resolved
+// through the cached WorkStateTime property instead of the type name.
+// =========================================================================
 
 public static class PatchMedEffectHooks
 {
@@ -31,17 +48,17 @@ public static class PatchMedEffectHooks
         [HarmonyPostfix]
         private static void Postfix(object __instance)
         {
-            SmartActionLogger.Log("[MedEffect.Added] Postfix Added !");
+            SmartActionLogger.Log("[MedEffect.Added] Postfix");
 
             var (player, medItem, isValid) = ReflectionUtils.GetMedEffectContext(__instance, "Added");
-            if (!isValid)
-                return;
+            if (!isValid) return;
 
+            // ⚠️ VERIFY: "float_12" field name on MedEffect
             var float12Field = ReflectionUtils.GetOrCacheField(__instance.GetType(), "float_12");
 
             if (__instance is not IEffect effect)
             {
-                SmartActionLogger.Log($"[MedEffect.Added] Instance is not IEffect");
+                SmartActionLogger.Log("[MedEffect.Added] Instance is not IEffect");
                 return;
             }
 
@@ -54,14 +71,12 @@ public static class PatchMedEffectHooks
 
             if (float12Field?.GetValue(__instance) is not (float workTime and > 0f and < 20f))
             {
-                SmartActionLogger.Log($"[MedEffect.Added] Invalid work time field");
+                SmartActionLogger.Log("[MedEffect.Added] Invalid work time field");
             }
             else
             {
                 OriginalFloat12[key] = workTime;
-                SmartActionLogger.Log($"[MedEffect.Added] save 💾" +
-                                      $" WorkTime = {workTime:F2} for " +
-                                      $"{medItem.Template._name} and {effect.State.ToString()}");
+                SmartActionLogger.Log($"[MedEffect.Added] save 💾 WorkTime={workTime:F2} for {medItem.Template._name}/{effect.State}");
             }
         }
 
@@ -79,17 +94,16 @@ public static class PatchMedEffectHooks
             private static void Postfix(object __instance)
             {
                 var (player, medItem, isValid) = ReflectionUtils.GetMedEffectContext(__instance, "Started");
-                if (!isValid)
-                    return;
+                if (!isValid) return;
 
                 if (__instance is not IEffect effect)
                 {
-                    SmartActionLogger.Log($"[MedEffect.Started] Instance is not IEffect");
+                    SmartActionLogger.Log("[MedEffect.Started] Instance is not IEffect");
                     return;
                 }
 
                 SetActiveParamInterceptor.BlockSetActiveParam = false;
-                SmartActionLogger.Log($"[MedEffect.Started] Postfix Started ! 🔓🔓🔓 SetActiveParam method8 free");
+                SmartActionLogger.Log("[MedEffect.Started] 🔓 SetActiveParam method_8 free");
 
                 EffectUpdateCache.Remove(effect);
                 EffectUpdateCache[effect] = (EPlayerState.None, EEffectState.None);
@@ -97,23 +111,26 @@ public static class PatchMedEffectHooks
 
                 var key = (medItem, effect.State);
 
+                // ⚠️ VERIFY: "float_12" and "WorkStateTime" names
                 var float12Field = ReflectionUtils.GetOrCacheField(__instance.GetType(), "float_12");
-                var workStateTimeProperty = ReflectionUtils.GetOrCacheProperty(typeof(ActiveHealthController.GClass2813), "WorkStateTime");
 
-                if (float12Field?.GetValue(__instance)
-                        is not (float float12 and > 0f and < 20f) ||
-                    workStateTimeProperty?.GetValue(__instance)
-                        is not (float workStateTime and > 0f and < 20f))
+                // WorkStateTime was on ActiveHealthController.GClass2813 in 3.11.
+                // We now find that type at runtime via LoopTime's type-discovery,
+                // but for a cached property lookup we use the instance type directly
+                // since __instance IS a GClass2813 (or its 4.0 equivalent).
+                var workStateTimeProperty = ReflectionUtils.GetOrCacheProperty(__instance.GetType(), "WorkStateTime");
+
+                if (float12Field?.GetValue(__instance) is not (float float12 and > 0f and < 20f) ||
+                    workStateTimeProperty?.GetValue(__instance) is not (float workStateTime and > 0f and < 20f))
                 {
-                    SmartActionLogger.Log($"[MedEffect.Started] Invalid float12 or work time field");
+                    SmartActionLogger.Log("[MedEffect.Started] Invalid float12 or WorkStateTime");
                 }
                 else
                 {
                     OriginalFloat12[key] = float12;
                     OriginalWorkTime[key] = workStateTime;
-                    SmartActionLogger.Log($"[MedEffect.Started] save 💾" +
-                                          $" Float12 = {float12:F2}, WorkTime = {workStateTime:F2} for " +
-                                          $"{medItem.Template._name} and {effect.State.ToString()}");
+                    SmartActionLogger.Log(
+                        $"[MedEffect.Started] save 💾 Float12={float12:F2}, WorkTime={workStateTime:F2} for {medItem.Template._name}/{effect.State}");
                 }
             }
 
@@ -131,21 +148,19 @@ public static class PatchMedEffectHooks
                 [HarmonyPostfix]
                 private static void Postfix(object __instance)
                 {
-                    SmartActionLogger.Log("[MedEffect.Residue] Postfix Residue !");
+                    SmartActionLogger.Log("[MedEffect.Residue] Postfix");
 
                     var (player, medItem, isValid) = ReflectionUtils.GetMedEffectContext(__instance, "Residue");
-                    if (!isValid)
-                        return;
+                    if (!isValid) return;
 
-                    if (medItem != PatchDoMedEffect.LastHealingItem)
-                        return;
+                    if (medItem != PatchDoMedEffect.LastHealingItem) return;
 
-                    SmartActionLogger.Log($"[MedEffect.Residue][Transpiler] 🔏🔏🔏 stop SetActiveParam method8");
+                    SmartActionLogger.Log("[MedEffect.Residue] 🔏 stop SetActiveParam method_8");
                     SetActiveParamInterceptor.BlockSetActiveParam = true;
 
                     if (__instance is not IEffect effect)
                     {
-                        SmartActionLogger.Log($"[MedEffect.Residue] Instance is not IEffect");
+                        SmartActionLogger.Log("[MedEffect.Residue] Instance is not IEffect");
                         return;
                     }
 
@@ -154,27 +169,6 @@ public static class PatchMedEffectHooks
                     CurrentHealingEffect = effect;
                 }
             }
-
-            // [HarmonyPatch]
-            // public class PatchMedEffectRemoved
-            // {
-            //     private static MethodBase TargetMethod()
-            //     {
-            //         return ReflectionUtils.GetOrCacheMethod(
-            //             ReflectionUtils.GetOrCacheNestedType(typeof(ActiveHealthController), "MedEffect"),
-            //             "Removed");
-            //     }
-            //
-            //     [HarmonyPrefix]
-            //     private static void Prefix(object __instance)
-            //     {
-            //         var (player, medItem, isValid) = ReflectionUtils.GetMedEffectContext(__instance, "Removed");
-            //         if (!isValid)
-            //             return;
-            //
-            //         SmartActionLogger.Log($"[MedEffect.Removed] Removed");
-            //     }
-            // }
         }
     }
 }
