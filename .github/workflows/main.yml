@@ -20,48 +20,59 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
-      # 2. Setup .NET (need SDK for dotnet build; net472 compiles fine on Linux
-      #    via the Mono-backed .NET SDK targets included in the dotnet SDK)
+      # 2. Setup .NET SDK
       # -----------------------------------------------------------------------
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'   # SDK version; still targets net472 below
+          dotnet-version: '8.0.x'
 
       # -----------------------------------------------------------------------
       # 3. Restore managed reference DLLs
       #
-      #    Store a zip of the required DLLs from your SPT install as a
-      #    base64-encoded GitHub Actions secret named MANAGED_REFS_B64.
+      #    You need a secret called MANAGED_REFS_B64 containing a base64-encoded
+      #    zip of the following DLLs from your SPT 4.0.13 install:
       #
-      #    How to create it (PowerShell on Windows):
-      #      $bytes = [IO.File]::ReadAllBytes('managed_refs.zip')
-      #      [Convert]::ToBase64String($bytes) | Set-Clipboard
-      #    Then paste into Settings > Secrets > MANAGED_REFS_B64.
+      #      Assembly-CSharp.dll            (EscapeFromTarkov_Data/Managed/)
+      #      Assembly-CSharp-firstpass.dll  (EscapeFromTarkov_Data/Managed/)
+      #      UnityEngine.dll                (EscapeFromTarkov_Data/Managed/)
+      #      UnityEngine.CoreModule.dll     (EscapeFromTarkov_Data/Managed/)
+      #      BepInEx.dll                    (BepInEx/core/)
+      #      0Harmony.dll                   (BepInEx/core/)
       #
-      #    The zip should contain these DLLs (from your SPT 4.0.13 install):
-      #      EscapeFromTarkov_Data/Managed/
-      #        Assembly-CSharp.dll          (SPT-remapped)
-      #        Assembly-CSharp-firstpass.dll
-      #        UnityEngine.dll
-      #        UnityEngine.CoreModule.dll
-      #      BepInEx/core/
-      #        BepInEx.dll
-      #        0Harmony.dll
+      #    How to create the secret (PowerShell):
+      #      Compress-Archive -Path `
+      #        "C:\SPT\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll",
+      #        "C:\SPT\EscapeFromTarkov_Data\Managed\Assembly-CSharp-firstpass.dll",
+      #        "C:\SPT\EscapeFromTarkov_Data\Managed\UnityEngine.dll",
+      #        "C:\SPT\EscapeFromTarkov_Data\Managed\UnityEngine.CoreModule.dll",
+      #        "C:\SPT\BepInEx\core\BepInEx.dll",
+      #        "C:\SPT\BepInEx\core\0Harmony.dll" `
+      #        -DestinationPath managed_refs.zip
+      #      [Convert]::ToBase64String([IO.File]::ReadAllBytes('managed_refs.zip')) | Set-Clipboard
+      #
+      #    Then add it at:
+      #      GitHub repo → Settings → Secrets and variables → Actions → New secret
+      #      Name: MANAGED_REFS_B64
       # -----------------------------------------------------------------------
+      - name: Check MANAGED_REFS_B64 secret is set
+        run: |
+          if [ -z "${{ secrets.MANAGED_REFS_B64 }}" ]; then
+            echo "::error::Secret MANAGED_REFS_B64 is not set."
+            echo "::error::See the 'Restore managed refs' step comments in build.yml for instructions."
+            exit 1
+          fi
+
       - name: Restore managed refs
         run: |
-          echo "${{ secrets.MANAGED_REFS_B64 }}" | base64 -d > managed_refs.zip
+          printf '%s' "${{ secrets.MANAGED_REFS_B64 }}" | base64 -d > managed_refs.zip
           mkdir -p refs
           unzip -j managed_refs.zip "*.dll" -d refs/
-          echo "Refs extracted:"
-          ls refs/
+          echo "Extracted refs:"
+          ls -lh refs/
 
       # -----------------------------------------------------------------------
-      # 4. Generate SmartAction.csproj
-      #
-      #    The original mod has no project file, so we create one on the fly.
-      #    All source files are picked up by the default SDK glob (**/*.cs).
+      # 4. Generate SmartAction.csproj on the fly
       # -----------------------------------------------------------------------
       - name: Generate SmartAction.csproj
         run: |
@@ -80,7 +91,6 @@ jobs:
               <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
               <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
             </PropertyGroup>
-
             <ItemGroup>
               <Reference Include="Assembly-CSharp">
                 <HintPath>refs/Assembly-CSharp.dll</HintPath>
@@ -117,7 +127,7 @@ jobs:
         run: dotnet build SmartAction.csproj -c Release --nologo
 
       # -----------------------------------------------------------------------
-      # 6. Upload artifact (always, for PRs and pushes)
+      # 6. Upload artifact
       # -----------------------------------------------------------------------
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -127,7 +137,7 @@ jobs:
           if-no-files-found: error
 
       # -----------------------------------------------------------------------
-      # 7. Create GitHub Release on tag push
+      # 7. Create GitHub Release on tag push (v*)
       # -----------------------------------------------------------------------
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
