@@ -1,0 +1,137 @@
+name: Build SmartAction
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:    [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Setup .NET (need SDK for dotnet build; net472 compiles fine on Linux
+      #    via the Mono-backed .NET SDK targets included in the dotnet SDK)
+      # -----------------------------------------------------------------------
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'   # SDK version; still targets net472 below
+
+      # -----------------------------------------------------------------------
+      # 3. Restore managed reference DLLs
+      #
+      #    Store a zip of the required DLLs from your SPT install as a
+      #    base64-encoded GitHub Actions secret named MANAGED_REFS_B64.
+      #
+      #    How to create it (PowerShell on Windows):
+      #      $bytes = [IO.File]::ReadAllBytes('managed_refs.zip')
+      #      [Convert]::ToBase64String($bytes) | Set-Clipboard
+      #    Then paste into Settings > Secrets > MANAGED_REFS_B64.
+      #
+      #    The zip should contain these DLLs (from your SPT 4.0.13 install):
+      #      EscapeFromTarkov_Data/Managed/
+      #        Assembly-CSharp.dll          (SPT-remapped)
+      #        Assembly-CSharp-firstpass.dll
+      #        UnityEngine.dll
+      #        UnityEngine.CoreModule.dll
+      #      BepInEx/core/
+      #        BepInEx.dll
+      #        0Harmony.dll
+      # -----------------------------------------------------------------------
+      - name: Restore managed refs
+        run: |
+          echo "${{ secrets.MANAGED_REFS_B64 }}" | base64 -d > managed_refs.zip
+          mkdir -p refs
+          unzip -j managed_refs.zip "*.dll" -d refs/
+          echo "Refs extracted:"
+          ls refs/
+
+      # -----------------------------------------------------------------------
+      # 4. Generate SmartAction.csproj
+      #
+      #    The original mod has no project file, so we create one on the fly.
+      #    All source files are picked up by the default SDK glob (**/*.cs).
+      # -----------------------------------------------------------------------
+      - name: Generate SmartAction.csproj
+        run: |
+          cat > SmartAction.csproj << 'CSPROJ'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net472</TargetFramework>
+              <AssemblyName>SmartAction</AssemblyName>
+              <RootNamespace>SmartAction</RootNamespace>
+              <Nullable>enable</Nullable>
+              <LangVersion>latest</LangVersion>
+              <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+              <Optimize>true</Optimize>
+              <Deterministic>true</Deterministic>
+              <OutputPath>bin/Release/</OutputPath>
+              <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+            </PropertyGroup>
+
+            <ItemGroup>
+              <Reference Include="Assembly-CSharp">
+                <HintPath>refs/Assembly-CSharp.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+              <Reference Include="Assembly-CSharp-firstpass">
+                <HintPath>refs/Assembly-CSharp-firstpass.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+              <Reference Include="BepInEx">
+                <HintPath>refs/BepInEx.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+              <Reference Include="0Harmony">
+                <HintPath>refs/0Harmony.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+              <Reference Include="UnityEngine">
+                <HintPath>refs/UnityEngine.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+              <Reference Include="UnityEngine.CoreModule">
+                <HintPath>refs/UnityEngine.CoreModule.dll</HintPath>
+                <Private>false</Private>
+              </Reference>
+            </ItemGroup>
+          </Project>
+          CSPROJ
+
+      # -----------------------------------------------------------------------
+      # 5. Build
+      # -----------------------------------------------------------------------
+      - name: Build (Release)
+        run: dotnet build SmartAction.csproj -c Release --nologo
+
+      # -----------------------------------------------------------------------
+      # 6. Upload artifact (always, for PRs and pushes)
+      # -----------------------------------------------------------------------
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartAction
+          path: bin/Release/SmartAction.dll
+          if-no-files-found: error
+
+      # -----------------------------------------------------------------------
+      # 7. Create GitHub Release on tag push
+      # -----------------------------------------------------------------------
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/Release/SmartAction.dll
+          generate_release_notes: true
